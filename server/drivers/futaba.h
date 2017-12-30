@@ -89,6 +89,8 @@ int futaba_init_driver(Driver *drvthis);
 
 int futaba_set_icon(Driver *drvthis);
 
+void send_special_chars(int sp_char[] , Driver *drvthis);
+
 void futaba_shutdown(Driver *drvthis);
 
 MODULE_EXPORT int futaba_init(Driver *drvthis);
