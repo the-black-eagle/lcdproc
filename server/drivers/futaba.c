@@ -4,18 +4,25 @@
  */
 
 /*- Copyright (C)
- *- 2014   Blackeagle         email: gm(dot)blackeagle(at)gmail(dot)com
+ *- 2014   Blackeagle         email: g(dot)moore(at)gmx(dot)co(dot)uk
  *- 2015/6 Alex Wood (AJW107) email: thetewood(at)gmail(dot)com
  *-
  *- CREDITS
  *- Steve Williams for the original driver code and the inspiration
  *- to write this.
  *-
- *- V E R S I O N - 1.3
+ *- V E R S I O N - 1.4
  *-
  *- C H A N G E L O G
  *- =================
  *-
+ *- Nov 2017  -  Add support for the following characters ".,'/-+&()?" which
+ *-              the display does not support natively.
+ *- Oct 2017  -  Add support for blinking the colon icons on the display
+ *-              when displaying a time.  Both HH:MM and HH:MM:SS formats
+ *-              are supported. (Long time version requires a little 'tweak'
+ *-              to the Kodi LCDPROC addon which is optional).
+ *-		 (by Blackeagle)
  *- 23/12/2016 - Improved function descriptions
  *-              Aligned more with lcdproc code style, function name changes
  *-              GNU indent format (first time used, agh)
@@ -105,6 +112,10 @@ typedef struct futaba_private_data {
 	char *old_framebuf;		/* old framebuffer */
 	int is_busy;			/* busy flag for futaba_flush */
 	uint64_t old_icon_map;		/* futaba icon map */
+	int flash;                      /* flag */
+    	int is_big_time;                /* flag for time in HH:MM:SS format */
+    	time_t heartbeat_last_time;     /* time of last heartbeat */
+    	unsigned char heartbeat_status; /* on or off */
 	USB_DEVICE_HANDLE *my_handle;	/* usb device handle */
 	futabaDriver_t *device;		/* data structure to store info about the futaba device */
 #ifdef HAVE_LIBUSB_1_0
@@ -160,12 +171,14 @@ int
 futaba_send_string(Driver *drvthis)
 {
 	int len;
-	int i, n;
+	int n, i, index = 0, is_time = 0, sp_flag =0;
+    	int sp[7] ={0};
 	futabaReport_t my_report;
 	/* store the private data in a variable to make the code easier to read (no a->b->c) */
 	PrivateData *p = drvthis->private_data;
 	char string[p->width * p->height];
-
+	char string2[p->width * p->height];
+    	p->flash = 0;
 	memset(&my_report, 0, sizeof(futabaReport_t));
 
 	p->is_busy = 1;
@@ -175,15 +188,88 @@ futaba_send_string(Driver *drvthis)
 		memcpy(string, p->framebuf + (i * p->width), p->width);
 		string[p->width] = '\0';
 
-		/* swap all occurances of the ':' char for '-'
-		 * TODO: Keep the ':' chars and use the ':' in between each
-		 *       Segment of the display */
-		len = strlen(string);
-		for (n = 0; n < len; n++) {
-			if (string[n] == ':') {
-				string[n] = '-';
-			}
-		}
+	}
+	*string2 = '\0';
+    sp_flag = 0;
+    while (string[index] != '\0'){      // check to see if we want to display
+        if ( isdigit(string[index]))    // a time ( hh:mm )
+            is_time ++;
+        if (string[index] == '-'){   // or a special character
+            string[index] = ' ';
+            sp[index] = 1;
+            sp_flag = 1;
+        }
+        if (string[index] == '/'){
+            sp[index] = 2;
+            sp_flag = 1;
+        }
+        if (string[index] == '\''){
+            sp[index] = 3;
+            sp_flag = 1;
+        }
+        if (string[index] == '+'){
+            sp[index] = 4;
+            sp_flag = 1;
+        }
+        if (string[index] == '&'){
+            sp[index] = 5;
+            sp_flag = 1;
+        }
+
+        if (string[index] == ','){
+            sp[index] = 6;
+            sp_flag = 1;
+        }
+        if (string[index] == '?'){
+            sp[index] = 7;
+            sp_flag = 1;
+        }
+        if (string[index] == '('){
+            sp[index] = 8;
+            sp_flag = 1;
+        }
+        if (string[index] == ')'){
+            sp[index] = 9;
+            sp_flag = 1;
+        }
+        if (string[index] == '.'){
+            sp[index] = 10;
+            sp_flag = 1;
+        }
+        index ++;
+    }
+
+    if (is_time == 4){
+        string2[0] = ' ';
+        string2[1] = string[0];
+        string2[2] = string[1];
+        string2[3] = string[3];
+        string2[4] = string[4];
+        string2[5] = ' ';
+        string2[6] = ' ';
+        string2[7] = '\0';
+        strcpy(string, string2);
+        p->flash = 1;  // turn on flag for heartbeat routine
+    }
+
+
+    // The following block is for a time in the format HH:MM:SS (Note that
+    // extra processing is needed in Kodi's xbmc lcdproc addon for this to
+    // work!)
+
+    else if (is_time ==6) {
+        string2[0] = ' ';
+        string2[1] = string[0];
+        string2[2] = string[1];
+        string2[3] = string[3];
+        string2[4] = string[4];
+        string2[5] = string[5];
+        string2[6] = string[6];
+        string2[7] = '\0';
+        strcpy(string, string2);
+        p->flash = 2; // turn on flag for heartbeat routine - extended colons
+    }
+
 
 		len = strlen(string);
 
@@ -214,6 +300,9 @@ futaba_send_string(Driver *drvthis)
 			futaba_send_report(p->my_handle, &my_report);
 		}
 	}
+	if(sp_flag == 1){
+        	send_special_chars(sp, drvthis);
+    	}
 
 	p->is_busy = 0;
 	return 0;
@@ -717,7 +806,71 @@ futaba_get_info(Driver *drvthis)
 		"Futaba TOSD-5711BB Driver v1.3 (c) Blackeagle 2014 & AJW107 2016";
 	return info_string;
 }
+MODULE_EXPORT void
+futaba_heartbeat(Driver *drvthis, int type)
+{
+    PrivateData *p = drvthis->private_data;
+    futabaReport_t my_report;
+    int opcode = 0;  //code of icon we want to FLASH
+    if ((time(NULL) <= p->heartbeat_last_time) && (p->flash !=0))
+           return;
 
+    if (p->flash == 2) {
+        p->is_big_time = 1;
+        opcode = 0x34;
+    }
+    else if (p->flash == 1){
+        p->is_big_time = 0;
+        opcode = 0x30;
+    }
+
+    if (HEARTBEAT_ON == type && HEARTBEAT_OFF == p->heartbeat_status && p->flash){
+        my_report.opcode = FUTABA_OPCODE_SYMBOL;
+        my_report.param1 = 0x02;
+        my_report.type.sym.count = 1;
+        my_report.type.sym.symbol[0].symName = opcode;
+        my_report.type.sym.symbol[0].state = FUTABA_SYM_ON;
+        futabaSendReport(p->my_handle, &my_report);
+        if (p->is_big_time) {
+            my_report.opcode = FUTABA_OPCODE_SYMBOL;
+            my_report.param1 = 0x02;
+            my_report.type.sym.count = 1;
+            my_report.type.sym.symbol[0].symName = 0x30; // light first colon
+            my_report.type.sym.symbol[0].state = FUTABA_SYM_ON;
+            futabaSendReport(p->my_handle, &my_report);
+        }
+    }
+    else {
+        my_report.opcode = FUTABA_OPCODE_SYMBOL;
+        my_report.param1 = 0x02;
+        my_report.type.sym.count = 1;
+        my_report.type.sym.symbol[0].symName = opcode;
+        my_report.type.sym.symbol[0].state = FUTABA_SYM_OFF;
+        futabaSendReport(p->my_handle, &my_report);
+    }
+    if (p->flash == 0 && p->is_big_time){ //stopped displaying big time
+        my_report.opcode = FUTABA_OPCODE_SYMBOL;
+        my_report.param1 = 0x02;
+        my_report.type.sym.count = 1;
+        my_report.type.sym.symbol[0].symName = 0x30;
+        my_report.type.sym.symbol[0].state = FUTABA_SYM_OFF;
+        futabaSendReport(p->my_handle, &my_report);
+        my_report.opcode = FUTABA_OPCODE_SYMBOL;
+        my_report.param1 = 0x02;
+        my_report.type.sym.count = 1;
+        my_report.type.sym.symbol[0].symName = 0x34;
+        my_report.type.sym.symbol[0].state = FUTABA_SYM_OFF;
+        futabaSendReport(p->my_handle, &my_report);
+        p->is_big_time = 0;
+    }
+
+
+    /* Toggle status */
+    p->heartbeat_status = (HEARTBEAT_ON == p->heartbeat_status) ?
+        HEARTBEAT_OFF : HEARTBEAT_ON;
+    /* Save time */
+    p->heartbeat_last_time = time(NULL);
+}
 /**
  *  Controls the custom icons.
  *
@@ -767,6 +920,41 @@ futaba_get_info(Driver *drvthis)
  * 6th Dot				39	0x37
  * vol (decimal 1-10)			3A....3D (No actual codes, just 4 values put aside)
  *						 (to differentiate volume bar control)
+ *
+ *NOTE - There is no point in defining 0x2A onwards as they are never set at the sending end
+ *     - and also, the volume (value) is hardcoded into bits 26-29.  To use the bitmap above would require
+ *     - modifying the sending addon to remap it's values to match those above.
+ *     - I'm leaving the above map for it's definitions of the codes, but reverting the actual code to use
+ *     - the following icon map as it matches the sending addons map
+ *
+ * Icon                 Bit
+ * Volume (the word)    0
+ * shuffle              1
+ * mute                 2
+ * phone                3 (unused)
+ * rec                  4
+ * radio                5
+ * dvd                  6 (set on movie / tv show playback)
+ * vcd                  7
+ * cd                   8
+ * music                9
+ * photo                10
+ * tv                   11
+ * disk in tray         12
+ * 5.1                  13
+ * 7.1                  14
+ * repeat               15
+ * all                  16
+ * rew                  17
+ * pause                18
+ * play                 19
+ * timer                20
+ * guide1               21
+ * guide2               22
+ * home                 23
+ * eject                24
+ * fwd                  25
+ * vol (decimal 1-10)   26....29 
  * \param drvthis   pointer to driver structure
  * \param icon_map  integer with bits representing LED states
  */
@@ -781,12 +969,9 @@ futaba_output(Driver *drvthis, uint64_t icon_map)
          *- Unknown Codes: 0x0D, 0x1C, 0x1D, 0x27 where not SEEN to do anything (but may do)
          *- Segment Codes: 0x38 to 0x99 contol each of the 14 segments of each character
 	 *- Unused Codes: 0x9A onwards just produce garbage */
-	const char Icon[FUTABA_ICON_ARRAY_LENGTH] =
-		{ 0x01, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19,
-		0x1a, 0x1b, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x28, 0x29, 0x2A,
-		0x2B, 0x2C, 0x2D, 0x2E,
-		0x2F, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37
-	};
+	cconst char Icon[26] =
+        { 0x01, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19,
+      	0x1a, 0x1b, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x28, 0x29 };
 	futabaReport_t my_report;
 	int i, n;
 	uint64_t numBars, the_volume;
@@ -800,7 +985,7 @@ futaba_output(Driver *drvthis, uint64_t icon_map)
 	my_report.type.sym.count = 1;	/* set just one icon with each call */
 
 	/* only change icons whose states have changed to reduce flicker */
-	for (i = 0; i < FUTABA_ICON_ARRAY_LENGTH; i++) {
+	for (i = 0; i < 26; i++) {
 		if (icons_changed & (1 << i)) {
 			my_report.type.sym.symbol[0].symName = Icon[i];
 			my_report.type.sym.symbol[0].state = ((icon_map & (1 << i)) < 1) ? 0 : 1;;
@@ -810,10 +995,10 @@ futaba_output(Driver *drvthis, uint64_t icon_map)
 	}
 
 	/* this is 0 -  10 */
-	the_volume = (icon_map >> FUTABA_ICON_ARRAY_LENGTH) & 0x0F;
+	the_volume = (icon_map >> 26) & 0x0F;
 
 	/* Only write to the display if the volume has changed */
-	if (the_volume != ((p->old_icon_map >> FUTABA_ICON_ARRAY_LENGTH) & 0x0F)) {
+	if (the_volume != ((p->old_icon_map >> 26) & 0x0F)) {
 		memset(&my_report, 0, sizeof(futabaReport_t));
 		numBars = (the_volume * FUTABA_VOLUME_BARS) / 10;
 		my_report.opcode = FUTABA_OPCODE_SYMBOL;
@@ -839,4 +1024,116 @@ futaba_output(Driver *drvthis, uint64_t icon_map)
 	}
 	/* and off we go again */
 	p->old_icon_map = icon_map;
+}
+ * Internal routine to 'draw' some special characters on the display
+ * as they are not supported with the internal character set
+ *
+ * This is admittedly a bit of a bodge, but it's the only way I can see to
+ * get the display to show the following charaters
+ *
+ *  - , ' + & ? / .
+ *
+ * input is an array (character mapped to the display) containing a code for
+ * each special character required at each position on the display
+ *
+ */
+void send_special_chars(int sp_char[], Driver *drvthis){
+    futabaReport_t my_report;
+    PrivateData *p = drvthis->private_data;
+    int index = 0, amount=0;
+    memset(&my_report,0,sizeof(futabaReport_t)); // clear report
+
+    for (index =0;index <7;index ++){
+        if (sp_char[index] == 1){ // draw a '-'
+            my_report.type.sym.symbol[amount].symName = 69 + (index * 14);
+            my_report.type.sym.symbol[amount].state = 1;
+            my_report.type.sym.symbol[amount +1].symName = 65 + (index *14);
+            my_report.type.sym.symbol[amount +1].state = 1;
+            amount += 2;
+        }
+        if (sp_char[index] == 2){ // draw a '/'
+            my_report.type.sym.symbol[amount].symName = 64 + (index * 14);
+            my_report.type.sym.symbol[amount].state = 1;
+            my_report.type.sym.symbol[amount +1].symName = 68 + (index *14);
+            my_report.type.sym.symbol[amount +1].state = 1;
+            amount += 2;
+        }
+        if (sp_char[index] == 3){ // draw a '\''
+            my_report.type.sym.symbol[amount].symName = 63 + (index * 14);
+            my_report.type.sym.symbol[amount].state = 1;
+            amount += 1;
+        }
+        if (sp_char[index] == 4){ // draw a '+'
+            my_report.type.sym.symbol[amount].symName = 63 + (index * 14);
+            my_report.type.sym.symbol[amount].state = 1;
+            my_report.type.sym.symbol[amount +1].symName = 65 + (index *14);
+            my_report.type.sym.symbol[amount +1].state = 1;
+            my_report.type.sym.symbol[amount +2].symName = 67 + (index * 14);
+            my_report.type.sym.symbol[amount +2].state = 1;
+            my_report.type.sym.symbol[amount +3].symName = 69 + (index *14);
+            my_report.type.sym.symbol[amount +3].state = 1;
+            amount += 4;
+        }
+        if (sp_char[index] == 5){ // draw a '&' (it's rubbish but better than nothing !!)
+            my_report.type.sym.symbol[amount].symName = 59 + (index * 14);
+            my_report.type.sym.symbol[amount].state = 1;
+            my_report.type.sym.symbol[amount +1].symName = 60 + (index *14);
+            my_report.type.sym.symbol[amount +1].state = 1;
+            my_report.type.sym.symbol[amount +2].symName = 69 + (index * 14);
+            my_report.type.sym.symbol[amount +2].state = 1;
+            my_report.type.sym.symbol[amount +3].symName = 66 + (index *14);
+            my_report.type.sym.symbol[amount +3].state = 1;
+            my_report.type.sym.symbol[amount +4].symName = 62 + (index *14);
+            my_report.type.sym.symbol[amount +4].state = 1;
+            my_report.type.sym.symbol[amount +5].symName = 63 + (index *14);
+            my_report.type.sym.symbol[amount +5].state = 1;
+            my_report.type.sym.symbol[amount +6].symName = 56 + (index *14);
+            my_report.type.sym.symbol[amount +6].state = 1;
+            amount += 7;
+        }
+        if (sp_char[index] == 6){ // draw a ','
+            my_report.type.sym.symbol[amount].symName = 68 + (index * 14);
+            my_report.type.sym.symbol[amount].state = 1;
+            amount += 1;
+        }
+        if (sp_char[index] == 7){ // draw a '?'
+            my_report.type.sym.symbol[amount].symName = 56 + (index * 14);
+            my_report.type.sym.symbol[amount].state = 1;
+            my_report.type.sym.symbol[amount +1].symName = 57 + (index *14);
+            my_report.type.sym.symbol[amount +1].state = 1;
+            my_report.type.sym.symbol[amount +2].symName = 69 + (index * 14);
+            my_report.type.sym.symbol[amount +2].state = 1;
+            my_report.type.sym.symbol[amount +3].symName = 67 + (index *14);
+            my_report.type.sym.symbol[amount +3].state = 1;
+            my_report.type.sym.symbol[amount +3].symName = 61 + (index *14);
+            my_report.type.sym.symbol[amount +3].state = 1;
+            amount += 5;
+        }
+        if (sp_char[index] == 8){ // draw a '('
+            my_report.type.sym.symbol[amount].symName = 64 + (index * 14);
+            my_report.type.sym.symbol[amount].state = 1;
+            my_report.type.sym.symbol[amount+1].symName = 66 + (index * 14);
+            my_report.type.sym.symbol[amount+1].state = 1;
+            amount += 2;
+        }
+        if (sp_char[index] == 9){ // draw a ')'
+            my_report.type.sym.symbol[amount].symName = 62 + (index * 14);
+            my_report.type.sym.symbol[amount].state = 1;
+            my_report.type.sym.symbol[amount+1].symName = 68 + (index * 14);
+            my_report.type.sym.symbol[amount+1].state = 1;
+            amount += 2;
+        }
+        if (sp_char[index] == 10) { // draw a full-stop '.'
+            my_report.type.sym.symbol[amount].symName = 0x2D + (index * 2);
+            my_report.type.sym.symbol[amount].state = 1;
+            amount +=1;
+        }
+
+    if (amount > 30)
+        amount = 30;  // can't set more than 30 symbols each time
+    my_report.opcode = FUTABA_OPCODE_SYMBOL;
+    my_report.param1 = 0x02;
+    my_report.type.sym.count = amount;
+    futabaSendReport(p->my_handle, &my_report);
+    return;
 }
