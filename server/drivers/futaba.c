@@ -232,10 +232,7 @@ futaba_send_string(Driver *drvthis)
             sp[index] = 9;
             sp_flag = 1;
         }
-        if (string[index] == '.'){
-            sp[index] = 10;
-            sp_flag = 1;
-        }
+        
         index ++;
     }
 
@@ -1031,7 +1028,7 @@ futaba_output(Driver *drvthis, uint64_t icon_map)
  * This is admittedly a bit of a bodge, but it's the only way I can see to
  * get the display to show the following charaters
  *
- *  - , ' + & ? / .
+ *  - , ' + & ? / 
  *
  * input is an array (character mapped to the display) containing a code for
  * each special character required at each position on the display
@@ -1123,11 +1120,7 @@ void send_special_chars(int sp_char[], Driver *drvthis){
             my_report.type.sym.symbol[amount+1].state = 1;
             amount += 2;
         }
-        if (sp_char[index] == 10) { // draw a full-stop '.'
-            my_report.type.sym.symbol[amount].symName = 0x2D + (index * 2);
-            my_report.type.sym.symbol[amount].state = 1;
-            amount +=1;
-        }
+        
 
     if (amount > 30)
         amount = 30;  // can't set more than 30 symbols each time
