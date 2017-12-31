@@ -4,7 +4,7 @@
  */
 
 /*- Copyright (C)
- *- 2014   Blackeagle         email: g(dot)moore(at)gmx(dot)co(dot)uk
+ *- 2014/7 Blackeagle         email: g(dot)moore(at)gmx(dot)co(dot)uk
  *- 2015/6 Alex Wood (AJW107) email: thetewood(at)gmail(dot)com
  *-
  *- CREDITS
@@ -68,7 +68,7 @@
  *-            algorithm tweaked to display 0 bars when muted. (by blackeagle)
  *-
  *- 27/03/14 - As the display doesnt support ':', added a routine to swap
- *-            this to '-' for the clock display (by blackeagle)
+ *-            this to '-' for the clock display (by blackeagle) (Note that this never worked !!)
  *-
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as published by
@@ -286,8 +286,9 @@ futaba_send_string(Driver *drvthis)
 					report(RPT_ERR, "[%s] Failed to send report",
 					       drvthis->name);
 					return -1;
-					usleep(500000);
+					
 				}
+				usleep(500000);
 				my_report.type.str.startPos--;
 				len--;
 			}
@@ -800,7 +801,7 @@ futaba_get_info(Driver *drvthis)
 {
 	// PrivateData *p = drvthis->private_data;
 	static char *info_string =
-		"Futaba TOSD-5711BB Driver v1.3 (c) Blackeagle 2014 & AJW107 2016";
+		"Futaba TOSD-5711BB Driver v1.4 (c) Blackeagle 2014/7 & AJW107 2016";
 	return info_string;
 }
 MODULE_EXPORT void
